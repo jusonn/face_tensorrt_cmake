@@ -18,9 +18,7 @@ set(SAMPLE_PARSERS "none")
 set(CMAKE_CXX_STANDARD 17 )
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 set(CUDA_INSTALL_DIR /usr/local/cuda)
-#set(SAMPLES_COMMON_SOURCES
-#        ${SAMPLES_DIR}/common/logger.cpp
-#        )
+
 
 if(BUILD_PLUGINS)
     list(APPEND DEPS_LIST nvinfer_plugin)
