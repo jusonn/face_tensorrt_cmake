@@ -1,0 +1,419 @@
+﻿#include "checkBlacklist.h"
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <memory>
+
+
+
+
+
+checkBlacklist::checkBlacklist() {
+	m_ImageFormat = 0;
+	m_ImageWidth = 1280;
+	m_ImageHeight = 720;
+	m_StableRatio1 = 0.08;        // XY displacement threshold ratio
+	m_StableCount = 10;           // Stable frame count
+	m_StableRatio3 = 0.7;          // Usable detected IDcard size ratio
+	m_CardCheckerFlag = 0;
+	m_FaceRocation = 0;
+	m_LandmarkInputWidth = 64;
+	m_LandmarkInputHeight = 64;
+	m_PrevLocationY = int(m_ImageWidth * 0.5);
+	m_WarpSize = cv::Size(CARD_WIDTH * 2, CARD_HEIGHT * 2);
+	m_WarpCorners = new std::vector<cv::Point2f>[MAX_WARP_CORNER];
+	m_StabilizedCorner = new std::vector<cv::Point2f>[1];
+	m_StabilizedCorner[0] = std::vector<cv::Point2f>(4);
+	m_CardType = 0;
+
+
+    template <typename T>
+    using SampleUniquePtr = std::unique_ptr<T, samplesCommon::InferDeleter>;
+
+
+	for (int i = 0; i < MAX_CHEKER_STATE; i++) { m_CheckerResultState[i] = 0.0; }
+	for (int i = 0; i < MAX_WARP_CORNER; i++) { m_WarpCorners[i] = std::vector<cv::Point2f>(LANDMARK_POINT); }
+
+}
+
+OCRCapture::~OCRCapture() {
+	m_LandmarkNet.clear();
+	m_ConditionCheckNet.clear();
+	m_CardCheckNet.clear();
+}
+
+
+int OCRCapture::Init(int imageFormat, int imageWidth, int imageHeight, int rotateDegree, float imageMargin, float stableRatio1, int stableCount, string modelsPath) {
+#ifdef PRINT_LOG
+	LOGD("con", "OCRProcess Initilization Start");
+#endif
+	string landmarkParamPath = modelsPath + "/landmark.param";
+	string landmarkModelPath = modelsPath + "/landmark.bin";
+	string conditionerParamPath = modelsPath + "/conditioner.param";
+	string conditionerModelPath = modelsPath + "/conditioner.bin";
+	string cardcheckerParamPath = modelsPath + "/cardchecker.param";
+	string cardcheckerModelPath = modelsPath + "/cardchecker.bin";
+	string faceDetectorPath = modelsPath + "/facedetector.xml";
+	/*
+	int result = m_LandmarkNet.load_param(landmarkParamPath.c_str());
+	if (result) { // NCNN 모델은 0이 아니면 문제고
+	   LOGE("con", "Failed to load models. result: %d / path: %s", result,
+		  landmarkParamPath.c_str());
+	   return -1;
+	}
+	*/
+	bool faceDetectorResult = m_FaceDetector.load(faceDetectorPath.c_str());
+	/*
+	if (!faceDetectorResult) { // FaceDetector는 true가 아니면 문제임.
+	   LOGE("con", "Failed to load models. faceDetectorResult: %d / path: %s",
+		  faceDetectorResult, faceDetectorPath.c_str());
+	   return -1;
+	}
+	*/
+
+	m_ImageFormat = imageFormat;
+	m_ImageWidth = imageWidth;
+	m_ImageHeight = imageHeight;
+	m_StableRatio1 = 0.08;//stableRatio1;
+	m_StableCount = 10;//stableCount;
+	m_PrevLocationY = int(m_ImageWidth * 0.5);
+	m_CardWidth = 1280;
+	m_CardHeight = int(m_CardWidth*0.630555);
+	m_WarpSize = cv::Size(m_CardWidth, m_CardHeight);
+	m_OriginSize = cv::Size(m_CardWidth + 80, m_CardHeight + 80);
+	m_ImageFormat = imageFormat;    // 0: Android Camera2, 1: Android Camera1, IOS Camera
+	m_CropGrayImage = cv::Mat::zeros(m_WarpSize, CV_8UC1);
+	m_CropImage = cv::Mat::zeros(m_WarpSize, CV_8UC3);
+	m_OriginImage = cv::Mat::zeros(m_OriginSize, CV_8UC3);
+#ifdef PRINT_LOG
+	LOGD("con", "OCRProcess Initilization End");
+#endif
+	return 1;
+}
+
+void OCRCapture::OCRReset()
+{
+	m_LandmarkInputWidth = 83;
+	m_LandmarkInputHeight = 83;
+	m_PrevLocationY = int(m_ImageWidth * m_GuidPosition);
+	m_CardCheckerFlag = 0;
+	m_FaceRocation = 0;
+
+	for (int i = 0; i < MAX_CHEKER_STATE; i++) { m_CheckerResultState[i] = 0.0; }
+	for (int i = 0; i < MAX_WARP_CORNER; i++) { m_WarpCorners[i] = vector<cv::Point2f>(LANDMARK_POINT); }
+}
+bool OCRCapture::exists_test(const std::string& name)
+{
+	struct stat buffer;
+	return (stat(name.c_str(), &buffer) == 0);
+}
+
+
+float getAngle(int x1, int y1, int x2, int y2)
+{
+	int dx = x2 - x1;
+	int dy = y2 - y1;
+
+	float rad = atan2(dx, dy);
+	float degree = (rad*180.0) / PI;
+
+	return degree;
+}
+
+
+namespace Ocr
+{
+
+}
+
+void OCR()
+{
+	OCRCapture OCR = OCRCapture();
+	string modelPath = "Z:\\1. ocr\\model\\arxive\\model_20191204";
+	ncnn::Net net;
+	const std::string& path = "Z:\\1. ocr\\data\\card_checker\\cardchecker_resized\\dl\\austin\\20181231_141635(0).jpg";
+	const std::string& outpath = "Z:\\1. ocr\\data\\output.jpg";
+	const std::string& outpath1 = "Z:\\1. ocr\\data\\output1.jpg";
+	const std::string& outpath2 = "Z:\\1. ocr\\data\\output2.jpg";
+
+	if (OCR.exists_test(path))
+	{
+		cout << "경로 :" << path << "\n파일이 존재 합니다.\n" << endl;
+		cv::Mat img = cv::imread(path, cv::IMREAD_GRAYSCALE);
+		int w = img.cols; // 720
+		int h = img.rows;  // 1280
+		int m_ImageWidth = 720;
+		int m_ImageHeight = 1280;
+		float m_GuidPosition = 0.5;
+
+		cv::Rect rect(0, int(m_ImageHeight * m_GuidPosition) - (m_ImageWidth*0.5*0.8), m_ImageWidth, m_ImageWidth*0.8);
+		cout << "w " << w << "h" << h << endl;
+		cv::Mat roi_img = img(rect);
+		cout << "check1 " << endl;
+		cv::Mat resized_input;
+
+		/*imread(path, cv::IMREAD_GRAYSCALE);*/
+
+		cv::resize(roi_img, resized_input, cv::Size(32, 20), cv::INTER_AREA);
+		//cv::imwrite(outpath, resized_input);
+		// subtract 128, norm to -1 ~ 1
+		ncnn::Mat in = ncnn::Mat::from_pixels(resized_input.data, ncnn::Mat::PIXEL_GRAY, 32, 20);
+		float mean[1] = { 128.f };
+		//float norm[1] = { 1 / 128.f };
+		float norm[1] = { 1.0f };
+		in.substract_mean_normalize(mean, norm);
+
+
+		ncnn::Net net;
+		string cardcheckerParamPath = modelPath + "/cardchecker.param";
+		string cardcheckerModelPath = modelPath + "/cardchecker.bin";
+
+
+
+		net.load_param(cardcheckerParamPath.c_str());
+		net.load_model(cardcheckerModelPath.c_str());
+
+
+
+		ncnn::Extractor ex = net.create_extractor();
+		ex.set_light_mode(true);
+		ex.set_num_threads(4);
+
+		ex.input("data", in);
+		ncnn::Mat out;
+		ex.extract("prob", out);
+		/*cout << "경로 :" << out.cols << "::" << endl;*/
+
+		ncnn::Mat out_flatterned = out.reshape(out.w * out.h * out.c);
+		cout << "result_0 : " << out_flatterned[0] << endl;
+		cout << "result_1 : " << out_flatterned[1] << endl;
+
+
+		cout << "Get landmark" << endl;
+
+		string landmarkParamPath = modelPath + "\\landmark.param";
+		string landmarkModelPath = modelPath + "\\landmark.bin";
+
+
+
+		ncnn::Net m_LandmarkNet;
+		int result = m_LandmarkNet.load_param(landmarkParamPath.c_str()); cout << "check2 " << endl;
+		if (result) { // NCNN 모델은 0이 아니면 문제고
+			printf("con", "Failed to load models. result: %d / path: %s", result,
+				landmarkParamPath.c_str());
+			return;
+		}
+		result = m_LandmarkNet.load_model(landmarkModelPath.c_str());
+		if (result) {
+			printf("con", "Failed to load models. result: %d / path: %s", result,
+				landmarkModelPath.c_str());
+			return;
+		}
+
+
+		cout << "check2 " << endl;
+
+		ncnn::Mat Lanout;
+		ncnn::Extractor exLand = m_LandmarkNet.create_extractor();
+
+		const float mean_vals_lan[1] = { 128.0 };
+		const float norm_vals_lan[1] = { 1.0 / 128.0 };
+		cv::Rect rect2(0, int(m_ImageHeight * m_GuidPosition) - (m_ImageWidth*0.5), m_ImageWidth, m_ImageWidth);
+		cout << "w " << w << "h" << h << endl;
+		cv::Mat roi_img2 = img(rect2);
+
+
+		cv::Mat input3 = roi_img2.clone();
+		cv::imwrite(outpath2, roi_img2);
+		cv::Mat input2;
+		cv::resize(input3, input2, cv::Size(83, 83), 1);
+		ncnn::Mat in2 = ncnn:
+		: Mat::from_pixels(input2.data, ncnn::Mat::PIXEL_GRAY, 83, 83);
+		cv::Mat in3 = input2.clone();
+
+
+
+		in2.substract_mean_normalize(mean_vals_lan, norm_vals_lan);
+		exLand.set_num_threads(4);
+		exLand.set_light_mode(true);
+		cout << "check3 " << endl;
+		if (exLand.input("data", in2)) {
+			return;
+		}
+		cout << "check4 " << endl;
+		if (exLand.extract("Dense4", out)) {
+			return;
+		}
+		cout << "check5 " << endl;
+
+
+		std::vector<cv::Point2f> *m_WarpCorners;
+		m_WarpCorners = new std::vector<cv::Point2f>[MAX_WARP_CORNER];
+
+		int m_PrevLocationY;
+
+
+		for (int i = 0; i < MAX_WARP_CORNER; i++) { m_WarpCorners[i] = std::vector<cv::Point2f>(LANDMARK_POINT); }
+		cout << "check5 " << endl;
+		for (int i = 0; i < out.w / 2; i++) {
+			m_WarpCorners[0][i] = cv::Point2f(out[i * 2 + 0] * m_ImageWidth, out[i * 2 + 1] * m_ImageWidth);
+			cv::circle(input3, cv::Point2f(out[i * 2 + 0] * m_ImageWidth, out[i * 2 + 1] * m_ImageWidth), 0, 5);
+			cout << "m_WarpCorners : " << i << " " << m_WarpCorners[0][i].x << " " << m_WarpCorners[0][i].y << endl;
+		}
+
+		int m_CardWidth, m_CardHeight;
+		m_CardWidth = 1280;
+		m_CardHeight = int(m_CardWidth*0.630555);
+		vector<cv::Point2f> corners(4);
+		corners[0] = cv::Point2f(0, 0);
+		corners[1] = cv::Point2f(0, m_CardHeight);
+		corners[2] = cv::Point2f(m_CardWidth, m_CardHeight);
+		corners[3] = cv::Point2f(m_CardWidth, 0);
+		int startX = 0;
+		int startY = 0;
+		int endX = m_ImageWidth;
+		int endY = m_ImageWidth * 0.8;
+
+		cv::Size m_WarpSize;
+		cv::Size m_OriginSize;
+
+		m_WarpSize = cv::Size(m_CardWidth, m_CardHeight);
+		//m_OriginSize = cv::Size(m_CardWidth + 80, m_CardHeight + 80);
+
+		/*m_OriginSize.width = m_ImageHeight;
+		m_OriginSize.height = m_ImageWidth;
+		cv::Mat WarpedImage_result_color_margin;*/
+
+		vector<cv::Point2f> corners2(4);
+		corners2[0] = cv::Point2f(startX, startY);
+		corners2[1] = cv::Point2f(startX, endY);
+		corners2[2] = cv::Point2f(endX, endY);
+		corners2[3] = cv::Point2f(endX, startY);
+		cv::Mat trans = getPerspectiveTransform(m_WarpCorners[0], corners);
+		//cv::warpPerspective(input_bgra, m_CropImage, trans, m_WarpSize);
+		//cv::Mat img_gray(m_ImageHeight, m_ImageWidth, CV_8UC1, roi_img.data);
+		cv::Mat m_CropGrayImage;
+
+		cv::warpPerspective(input3, m_CropGrayImage, trans, m_WarpSize);
+		cout << "check6 " << endl;
+
+		cv::imwrite(outpath1, input3);
+		cv::imwrite(outpath, m_CropGrayImage);
+
+
+
+		cout << "Check whether this card is id/dl or not" << endl;
+
+
+		string m_validCardParamPath = modelPath + "\\validCard.param";
+		string m_validCardModelPath = modelPath + "\\validCard.bin";
+		ncnn::Net m_validCardNet;
+
+		result = m_validCardNet.load_param(m_validCardParamPath.c_str()); cout << "check2 " << endl;
+		if (result) { // NCNN 모델은 0이 아니면 문제고
+			printf("con", "Failed to load models. result: %d / path: %s", result,
+				m_validCardParamPath.c_str());
+			return;
+		}
+		result = m_validCardNet.load_model(m_validCardModelPath.c_str());
+		if (result) {
+			printf("con", "Failed to load models. result: %d / path: %s", result,
+				m_validCardModelPath.c_str());
+			return;
+		}
+
+		cout << "check7 " << endl;
+
+
+		ncnn::Extractor exVal = m_validCardNet.create_extractor();
+
+		const float mean_vals_Val[1] = { 0.f };
+		const float norm_vals_Val[1] = { 1 / 255.f };
+		cout << "check8 " << endl;
+
+
+
+		cv::Mat input4 = m_CropGrayImage.clone();
+
+		cv::Rect rect3(0, 0, 224, 62);
+		//cv::Rect rect3(224, 62, 224+224, 62+62);
+		cout << "w " << w << "h" << h << endl;
+		cv::Mat roi_img3 = input4(rect3);
+
+
+		cv::Mat input5;
+		cv::resize(roi_img3, input5, cv::Size(320, 320), 1);
+
+		ncnn::Mat in5 = ncnn::Mat::from_pixels_resize(input5.data, ncnn::Mat::PIXEL_GRAY, 320, 320, 320, 320);
+
+		in5.substract_mean_normalize(mean_vals_Val, norm_vals_Val);
+		exVal.set_num_threads(4);
+		exVal.set_light_mode(true);
+		cout << "check9 " << endl;
+		//ncnn::Mat in5_flattened = in5.reshape(in5.w * in5.h * in5.c);
+
+		if (exVal.input("input_1:0", in5)) {
+			return;
+		}
+
+		cout << "check10 " << endl;
+
+		//exVal.extract("conv1/Conv2D__6:0", valOut);
+		ncnn::Mat valOut;
+		//exVal.extract("loss/Softmax", valOut);
+		if (exVal.extract("loss/Softmax:0", valOut)) {
+			return;
+		}
+		cout << "check11 " << endl;
+
+		ncnn::Mat valOut_flatterned = valOut.reshape(valOut.w * valOut.h * valOut.c);
+		cout << "result_0 : " << valOut_flatterned[0] << endl;
+		cout << "result_1 : " << valOut_flatterned[1] << endl;
+
+   }
+   else
+   {
+   printf("파일이 존재하지 않습니다.\n");
+   }
+
+   cout << "server working verified" << endl;
+}
+
+
+int main()
+{
+    std::cout << "Hello World!\n";
+    checkBlacklist.Init();
+
+    cv::imread("/root/optimization/face_tensorrt/drive_license.png",cv::IMREAD_COLOR);
+
+    samplesCommon::Args args;
+    bool argsOK = samplesCommon::parseArgs(args, argc, argv);
+    if (!argsOK)
+    {
+        gLogError << "Invalid arguments" << std::endl;
+        printHelpInfo();
+        return EXIT_FAILURE;
+    }
+    if (args.help)
+    {
+        printHelpInfo();
+        return EXIT_SUCCESS;
+    }
+
+    auto sampleTest = gLogger.defineTest(gSampleName, argc, argv);
+
+    gLogger.reportTestStart(sampleTest);
+
+    checkBlacklist checkBlacklist;
+
+
+    SampleOnnxMNIST sample(initializeSampleParams(args));
+
+
+
+}
+
+
+
