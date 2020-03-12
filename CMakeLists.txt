@@ -7,12 +7,7 @@ set(TARGET_NAME face_tensorrt)
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -pthread")
 
-#set(_TensorRT_SEARCHES)
 
-#if(TensorRT_ROOT)
-#    set(_TensorRT_SEARCH_ROOT PATHS ${TensorRT_ROOT} NO_DEFAULT_PATH)
-#    list(APPEND _TensorRT_SEARCHES _TensorRT_SEARCH_ROOT)
-#endif()
 set(PLUGINS_NEEDED OFF)
 set(SAMPLE_PARSERS "none")
 set(CMAKE_CXX_STANDARD 17 )
@@ -35,35 +30,7 @@ else()
     set(ONNX_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/parsers${NVINTERNAL_SUFFIX}/onnx CACHE STRING "Onnx include directory")
 endif()
 
-
-#target_include_directories(face_tensorrt
-#PUBLIC /root/optimization/face_tensorrt/include
-#PUBLIC ${ONNX_INCLUDE_DIR}
-#PUBLIC ${CUDA_INSTALL_DIR}/include
-#PRIVATE /root/optimization/face_tensorrt/include/common
-##        PRIVATE ${TARGET_DIR}
-#)
-#set(CMAKE_CXX_STANDARD 14)
-
-
-#LIST(APPEND CMAKE_MODULE_PATH "CMakeModules")
-#if(WIN32)
-#    set(JDK)
-
-
-
-#set(OpenCV_STATIC ON)
-#set(OpenCV_DIR ${OPENCV_HOME}/skd/native/jni)
-#set(OpenCV_DIR "/usr/local/share/opencv4")
-#set(OpenMP_DIR "/usr/local/share/opencv4")
-
-#find_library(NVINFER NAMES libnvinfer.so)
-#find_library(NVPARSERS NAMES nvparsers)
-#find_library(NVONNXPARSERS NAMES nvonnxparser)
-
 find_package(OpenCV REQUIRED)
-#set(OpenCV_STATIC ON)
-
 find_package(OpenMP REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(CUDA 10.0 REQUIRED)
@@ -190,7 +157,7 @@ set(SAMPLE_DEP_LIBS
         ${CMAKE_DL_LIBS}
         ${CMAKE_THREAD_LIBS_INIT}
         )
-#set_target_properties(face_tensorrt PROPERTIES LINK_FLAGS "-Wl,--exclude-libs,ALL")
+
 
 add_executable(face_tensorrt ${NAME_HEADERS} ${NAME_LIBS})
 
