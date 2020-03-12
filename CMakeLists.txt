@@ -27,11 +27,6 @@ if(BUILD_PARSERS)
     list(APPEND DEPS_LIST nvuffparser nvcaffeparser nvonnxparser)
 endif()
 
-#if(BUILD_PLUGINS OR BUILD_PARSERS)
-#add_dependencies(face_tensorrt
-#${DEPS_LIST}
-#)
-#endif()
 
 # TODO: Remove the NVINTERNAL branch once the CMake system is fully integrated into P4
 if (NVINTERNAL)
